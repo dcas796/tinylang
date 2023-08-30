@@ -1,0 +1,36 @@
+; A function that computes the nth element of the
+; fibonacci sequence
+def fib
+    if iter == 0
+        move result 0
+        return
+    else
+        if iter == 1
+            move result 1
+            return
+        endif
+    endif
+    sub iter 1
+    call fib
+    move result_1 result
+    sub iter 1
+    call fib
+    add result result_1
+    return
+enddef
+
+while true
+    put "Insert a number between 0 and 94: "
+    get iter
+    if iter as number
+        if iter >= 0
+            if iter <= 94
+                break
+            endif
+        endif
+    endif
+    put "Invalid number"
+endwhile
+
+call fib
+put result

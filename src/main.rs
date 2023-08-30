@@ -12,7 +12,7 @@ mod expression;
 mod parser;
 
 fn main() {
-    let input = read("example.tiny").unwrap();
+    let input = read("../examples/fibonacci.tiny").unwrap();
     let input_str = String::from_utf8(input).unwrap();
     let lexer = Lexer::new(input_str.as_str());
 

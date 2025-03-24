@@ -1,7 +1,7 @@
 use thiserror::Error;
-use crate::expression::Expr;
+use crate::expression::{CommandExpr, ComparatorExpr, ConversionExpr, DefExpr, Expr, ExprType, IfExpr, WhileExpr};
 use crate::lexer::{Lexer, LexerError};
-use crate::token::{CommandType, LiteralType, Token};
+use crate::token::{CommandType, LiteralType, Token, TokenType};
 
 #[derive(Debug, Error)]
 pub enum ParserError {
@@ -11,8 +11,8 @@ pub enum ParserError {
     UnexpectedEof { start: usize },
     #[error("Expected an identifier, got: {token:?}")]
     ExpectedIdentifier { token: Token, start: usize, end: usize },
-    #[error("Unexpected token: {token:?}")]
-    UnexpectedToken { token: Token, start: usize, end: usize },
+    #[error("Unexpected token: {expr_type:?}")]
+    UnexpectedToken { expr_type: TokenType, start: usize, end: usize },
     #[error("Unexpected expression type: {expr:?}")]
     UnexpectedExpr { expr: Expr, start: usize, end: usize },
     #[error("Expected a comparison or a conversion")]
@@ -24,6 +24,7 @@ pub struct Parser<'a> {
 }
 
 pub type ParserResult = Result<Expr, ParserError>;
+pub type ParserTypeResult = Result<ExprType, ParserError>;
 
 impl<'a> Parser<'a> {
     pub fn new(lexer: Lexer<'a>) -> Self {
@@ -31,38 +32,44 @@ impl<'a> Parser<'a> {
             lexer
         }
     }
+
+    pub fn get_index(&self) -> usize {
+        self.lexer.get_index()
+    }
     
     pub fn next_expression(&mut self) -> ParserResult {
         loop {
-            let start = self.lexer.get_index();
+            let start = self.get_index();
             let token = self.lexer.peek()?;
 
-            return match token {
-                Token::Def => self.def_expr(start),
-                Token::If => self.if_expr(start),
-                Token::While => self.while_expr(start),
-                Token::Enddef |
-                Token::Else |
-                Token::Endif |
-                Token::Endwhile |
-                Token::As |
-                Token::Comparator(_) |
-                Token::Type(_) => Err(ParserError::UnexpectedToken {
-                    token,
+            let expr_type = match token.token_type {
+                TokenType::Def => self.def_expr(start),
+                TokenType::If => self.if_expr(start),
+                TokenType::While => self.while_expr(start),
+                TokenType::Endwhile |
+                TokenType::Else |
+                TokenType::As |
+                TokenType::Comparator(_) |
+                TokenType::Endif |
+                TokenType::Enddef |
+                TokenType::Type(_) => Err(ParserError::UnexpectedToken {
+                    expr_type: token.token_type,
                     start,
                     end: self.lexer.get_index(),
                 }),
-                Token::Not => self.comparator_expr(start, true),
-                Token::Identifier(name) => self.identifier_expr(start, name),
-                Token::Literal(literal) => self.literal_expr(start, literal),
-                Token::Command(command) => self.command_expr(start, command),
-                Token::Newline |
-                Token::Comment => {
+                TokenType::Not => self.comparator_expr(start, true),
+                TokenType::Identifier(name) => self.identifier_expr(start, name),
+                TokenType::Literal(literal) => self.literal_expr(start, literal),
+                TokenType::Command(command) => self.command_expr(start, command),
+                TokenType::Newline |
+                TokenType::Comment => {
                     self.next_token(false, 0)?;
                     continue;
                 },
-                Token::Eof => Ok(Expr::Eof),
-            }
+                TokenType::Eof => Ok(ExprType::Eof),
+            }?;
+            
+            return Ok(Expr::new(start, self.get_index(), expr_type));
         }
     }
 
@@ -82,11 +89,11 @@ impl<'a> Parser<'a> {
 
     fn next_token(&mut self, err_when_eof: bool, start: usize) -> Result<Token, ParserError> {
         match self.lexer.next_token()? {
-            Token::Eof => {
+            Token { index_range: _, token_type: TokenType::Eof } => {
                 if err_when_eof {
                     Err(ParserError::UnexpectedEof { start })
                 } else {
-                    Ok(Token::Eof)
+                    Ok(Token::new(self.get_index(), self.get_index(), TokenType::Eof))
                 }
             },
             token => Ok(token),
@@ -102,7 +109,7 @@ impl<'a> Parser<'a> {
         let token = self.next_token(err_when_eof, start)?;
         let end = self.lexer.get_index();
         if !condition(&token) {
-            Err(ParserError::UnexpectedToken { token, start, end })
+            Err(ParserError::UnexpectedToken { expr_type: token.token_type, start, end })
         } else {
             Ok(token)
         }
@@ -110,7 +117,8 @@ impl<'a> Parser<'a> {
 
     fn next_token_expect_end(&mut self, err_when_eof: bool) -> Result<(), ParserError> {
         self.next_token_expect(err_when_eof, |token| {
-            matches!(token, Token::Newline) || matches!(token, Token::Eof)
+            matches!(token, Token { index_range: _, token_type: TokenType::Newline })
+                || matches!(token, Token { index_range: _, token_type: TokenType::Eof })
         }).map(|_| {})
     }
 
@@ -127,14 +135,14 @@ impl<'a> Parser<'a> {
                     self.next_token(true, 0)?;
                     break;
                 }
-                Token::Eof => {
+                Token { index_range: _, token_type: TokenType::Eof } => {
                     if err_when_eof {
                         return Err(ParserError::UnexpectedEof { start });
                     }
                     break;
                 },
-                Token::Newline |
-                Token::Comment => {
+                Token { index_range: _, token_type: TokenType::Newline } |
+                Token { index_range: _, token_type: TokenType::Comment } => {
                     self.next_token(false, 0)?;
                 }
                 _ => {
@@ -145,22 +153,25 @@ impl<'a> Parser<'a> {
         Ok(exprs)
     }
 
-    fn consume_until_token(
+    fn consume_until_token_type(
         &mut self,
-        token: Token,
+        token_type: TokenType,
         err_when_eof: bool,
         start: usize
     ) -> Result<Vec<Expr>, ParserError> {
-        self.consume_until(|tok| tok == &token, err_when_eof, start)
+        self.consume_until(
+            |tok| tok.token_type == token_type,
+            err_when_eof,
+            start)
     }
     
-    fn def_expr(&mut self, start: usize) -> ParserResult {
+    fn def_expr(&mut self, start: usize) -> ParserTypeResult {
         // Consume def keyword
         self.next_token(true, start)?;
 
         let ident_start = self.lexer.get_index();
         let name = match self.next_token(true, start)? {
-            Token::Identifier(ident) => ident,
+            Token { index_range: _, token_type: TokenType::Identifier(ident) } => ident,
             token => return Err(ParserError::ExpectedIdentifier {
                 token,
                 start: ident_start,
@@ -170,58 +181,71 @@ impl<'a> Parser<'a> {
 
         self.next_token_expect_end(true)?;
 
-        let body = self.consume_until_token(
-            Token::Enddef,
+        let body = self.consume_until_token_type(
+            TokenType::Enddef,
             true,
             start)?;
-        Ok(Expr::Def { name, body })
+        Ok(ExprType::Def(DefExpr { 
+            name, 
+            body 
+        }))
     }
 
-    fn if_expr(&mut self, start: usize) -> ParserResult {
+    fn if_expr(&mut self, start: usize) -> ParserTypeResult {
         // Consume if keyword
         self.next_token(true, start)?;
-
-        let condition = self.condition_expr()?;
+        
+        let condition = {
+            let start = self.get_index();
+            let cond_type = self.condition_expr()?;
+            let end = self.get_index();
+            Expr::new(start, end, cond_type)
+        };
 
         let mut has_alternate = false;
         let body = self.consume_until(|tok| {
             match tok {
-                Token::Else => {
+                Token { index_range: _, token_type: TokenType::Else } => {
                     has_alternate = true;
                     true
                 }
-                Token::Endif => true,
+                Token { index_range: _, token_type: TokenType::Endif } => true,
                 _ => false,
             }
         }, true, start)?;
         let mut alternate = None;
         if has_alternate {
-            let alt_opt = self.consume_until_token(
-                Token::Endif, true, start)?;
+            let alt_opt = self.consume_until_token_type(
+                TokenType::Endif, true, start)?;
             alternate = Some(alt_opt);
         }
-        Ok(Expr::If {
+        Ok(ExprType::If(IfExpr {
             condition: Box::new(condition),
             body,
             alternate,
-        })
+        }))
     }
 
-    fn while_expr(&mut self, start: usize) -> ParserResult {
+    fn while_expr(&mut self, start: usize) -> ParserTypeResult {
         // Consume while keyword
         self.next_token(true, start)?;
 
-        let condition = self.condition_expr()?;
+        let condition = {
+            let start = self.get_index();
+            let cond_type = self.condition_expr()?;
+            let end = self.get_index();
+            Expr::new(start, end, cond_type)
+        };
 
-        let body = self.consume_until_token(
-            Token::Endwhile, true, start)?;
-        Ok(Expr::While {
+        let body = self.consume_until_token_type(
+            TokenType::Endwhile, true, start)?;
+        Ok(ExprType::While(WhileExpr {
             condition: Box::new(condition),
             body,
-        })
+        }))
     }
 
-    fn comparator_expr(&mut self, start: usize, inverse: bool) -> ParserResult {
+    fn comparator_expr(&mut self, start: usize, inverse: bool) -> ParserTypeResult {
         if inverse {
             // Consume not keyword
             self.next_token(true, start)?;
@@ -230,20 +254,22 @@ impl<'a> Parser<'a> {
         let mut tok_start = start;
 
         let left = match self.next_token(true, start)? {
-            Token::Identifier(ident) => Expr::Identifier(ident),
-            Token::Literal(lit) => Expr::Literal(lit),
+            Token { index_range, token_type: TokenType::Identifier(ident) } =>
+                Expr::new(*index_range.start(), *index_range.end(), ExprType::Identifier(ident)),
+            Token { index_range, token_type: TokenType::Literal(lit) } =>
+                Expr::new(*index_range.start(), *index_range.end(), ExprType::Literal(lit)),
             token => return Err(ParserError::UnexpectedToken {
-                token,
+                expr_type: token.token_type,
                 start: tok_start,
-                end: self.lexer.get_index(),
+                end: self.get_index(),
             })
         };
         tok_start = self.lexer.get_index();
 
-        let comparator = match self.next_token(true, start)? {
-            Token::Comparator(comp) => comp,
-            token => return Err(ParserError::UnexpectedToken {
-                token,
+        let comparator = match self.next_token(true, start)?.token_type {
+            TokenType::Comparator(comp) => comp,
+            expr_type => return Err(ParserError::UnexpectedToken {
+                expr_type,
                 start: tok_start,
                 end: self.lexer.get_index(),
             })
@@ -251,29 +277,32 @@ impl<'a> Parser<'a> {
         tok_start = self.lexer.get_index();
 
         let right = match self.next_token(true, start)? {
-            Token::Identifier(ident) => Expr::Identifier(ident),
-            Token::Literal(lit) => Expr::Literal(lit),
+            Token { index_range, token_type: TokenType::Identifier(ident) } =>
+                Expr::new(*index_range.start(), *index_range.end(), ExprType::Identifier(ident)),
+            Token { index_range, token_type: TokenType::Literal(lit) } =>
+                Expr::new(*index_range.start(), *index_range.end(), ExprType::Literal(lit)),
             token => return Err(ParserError::UnexpectedToken {
-                token,
+                expr_type: token.token_type,
                 start: tok_start,
                 end: self.lexer.get_index(),
             })
         };
 
-        Ok(Expr::Comparator {
+        Ok(ExprType::Comparator(ComparatorExpr {
             inverse,
             left: Box::new(left),
             right: Box::new(right),
             comparator,
-        })
+        }))
     }
 
-    fn conversion_expr(&mut self, start: usize) -> ParserResult {
+    fn conversion_expr(&mut self, start: usize) -> ParserTypeResult {
         let mut tok_start = start;
         let identifier = match self.next_token(true, start)? {
-            Token::Identifier(ident) => Expr::Identifier(ident),
+            Token { index_range, token_type: TokenType::Identifier(ident) } =>
+                Expr::new(*index_range.start(), *index_range.end(), ExprType::Identifier(ident)),
             token => return Err(ParserError::UnexpectedToken {
-                token,
+                expr_type: token.token_type,
                 start: tok_start,
                 end: self.lexer.get_index(),
             })
@@ -281,38 +310,38 @@ impl<'a> Parser<'a> {
 
         // Consume as keyword
         tok_start = self.lexer.get_index();
-        match self.next_token(true, start)? {
-            Token::As => {}
-            token => return Err(ParserError::UnexpectedToken {
-                token,
+        match self.next_token(true, start)?.token_type {
+            TokenType::As => {}
+            expr_type => return Err(ParserError::UnexpectedToken {
+                expr_type,
                 start: tok_start,
                 end: self.lexer.get_index(),
             })
         }
 
         tok_start = self.lexer.get_index();
-        let typ = match self.next_token(true, start)? {
-            Token::Type(typ) => typ,
-            token => return Err(ParserError::UnexpectedToken {
-                token,
+        let typ = match self.next_token(true, start)?.token_type {
+            TokenType::Type(typ) => typ,
+            expr_type => return Err(ParserError::UnexpectedToken {
+                expr_type,
                 start: tok_start,
                 end: self.lexer.get_index(),
             })
         };
 
-        Ok(Expr::Conversion {
+        Ok(ExprType::Conversion(ConversionExpr {
             ident: Box::new(identifier),
             to_type: typ,
-        })
+        }))
     }
 
-    fn condition_expr(&mut self) -> ParserResult {
+    fn condition_expr(&mut self) -> ParserTypeResult {
         let start = self.lexer.get_index();
-        let condition_unchecked = self.next_expression()?;
+        let condition_unchecked = self.next_expression()?.expr_type;
         match condition_unchecked {
-            Expr::Comparator { .. } => Ok(condition_unchecked),
-            Expr::Conversion { .. } => Ok(condition_unchecked),
-            Expr::Literal(LiteralType::Bool(_)) => Ok(condition_unchecked),
+            ExprType::Comparator { .. } => Ok(condition_unchecked),
+            ExprType::Conversion { .. } => Ok(condition_unchecked),
+            ExprType::Literal(LiteralType::Bool(_)) => Ok(condition_unchecked),
             _ => Err(ParserError::InvalidConditionExpr {
                 start,
                 end: self.lexer.get_index(),
@@ -320,28 +349,28 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn identifier_expr(&mut self, start: usize, name: String) -> ParserResult {
-        match self.lexer.peek_distance(1)? {
-            Token::Comparator(_) => self.comparator_expr(start, false),
-            Token::As => self.conversion_expr(start),
+    fn identifier_expr(&mut self, start: usize, name: String) -> ParserTypeResult {
+        match self.lexer.peek_distance(1)?.token_type {
+            TokenType::Comparator(_) => self.comparator_expr(start, false),
+            TokenType::As => self.conversion_expr(start),
             _ => {
                 self.next_token(false, start)?;
-                Ok(Expr::Identifier(name))
+                Ok(ExprType::Identifier(name))
             }
         }
     }
 
-    fn literal_expr(&mut self, start: usize, literal: LiteralType) -> ParserResult {
-        match self.lexer.peek_distance(1)? {
-            Token::Comparator(_) => self.comparator_expr(start, false),
+    fn literal_expr(&mut self, start: usize, literal: LiteralType) -> ParserTypeResult {
+        match self.lexer.peek_distance(1)?.token_type {
+            TokenType::Comparator(_) => self.comparator_expr(start, false),
             _ => {
                 self.next_token(false, start)?;
-                Ok(Expr::Literal(literal))
+                Ok(ExprType::Literal(literal))
             }
         }
     }
 
-    fn command_expr(&mut self, start: usize, command: CommandType) -> ParserResult {
+    fn command_expr(&mut self, start: usize, command: CommandType) -> ParserTypeResult {
         // Consume command name
         self.next_token(true, start)?;
 
@@ -363,66 +392,72 @@ impl<'a> Parser<'a> {
         }
     }
 
-    fn command_single_expr(&mut self, command: CommandType) -> ParserResult {
+    fn command_single_expr(&mut self, command: CommandType) -> ParserTypeResult {
         self.next_token_expect_end(false)?;
 
-        Ok(Expr::Command {
+        Ok(ExprType::Command(CommandExpr {
             command,
             args: vec![],
-        })
+        }))
     }
 
-    fn command_unary_expr(&mut self, command: CommandType) -> ParserResult {
+    fn command_unary_expr(&mut self, command: CommandType) -> ParserTypeResult {
         let arg1 = self.next_expression_expect(|expr| {
-            matches!(expr, Expr::Identifier(_))
+            matches!(expr, Expr { expr_type: ExprType::Identifier(_), .. })
         })?;
 
         self.next_token_expect_end(false)?;
 
-        Ok(Expr::Command {
+        Ok(ExprType::Command(CommandExpr {
             command,
             args: vec![arg1],
-        })
+        }))
     }
 
-    fn command_binary_expr(&mut self, command: CommandType) -> ParserResult {
+    fn command_binary_expr(&mut self, command: CommandType) -> ParserTypeResult {
         let arg1 = self.next_expression_expect(|expr| {
-            matches!(expr, Expr::Identifier(_))
+            matches!(expr, Expr { expr_type: ExprType::Identifier(_), .. })
         })?;
 
         let arg2 = self.next_expression_expect(|expr| {
-            matches!(expr, Expr::Identifier(_)) || matches!(expr, Expr::Literal(_))
+            matches!(expr, Expr { expr_type: ExprType::Identifier(_), .. }) ||
+                matches!(expr, Expr { expr_type: ExprType::Literal(_), .. })
         })?;
 
         self.next_token_expect_end(false)?;
 
-        Ok(Expr::Command {
+        Ok(ExprType::Command(CommandExpr {
             command,
             args: vec![arg1, arg2],
-        })
+        }))
     }
 
-    fn command_variadic_expr(&mut self, command: CommandType) -> ParserResult {
+    fn command_variadic_expr(&mut self, command: CommandType) -> ParserTypeResult {
         let mut args = Vec::new();
 
         loop {
             let start = self.lexer.get_index();
-            match self.next_token(false, 0)? {
-                Token::Newline |
-                Token::Eof => break,
-                Token::Identifier(ident) => args.push(Expr::Identifier(ident)),
-                Token::Literal(lit) => args.push(Expr::Literal(lit)),
+            let token = self.next_token(false, 0)?;
+            let token_start = *token.index_range.start();
+            let token_end = *token.index_range.end();
+            match token.token_type {
+                TokenType::Newline |
+                TokenType::Eof => break,
+                TokenType::Identifier(ident) => 
+                    args.push(Expr::new(token_start, token_end, ExprType::Identifier(ident))),
+                TokenType::Literal(lit) => 
+                    args.push(Expr::new(token_start, token_end, ExprType::Literal(lit))),
                 token => return Err(ParserError::UnexpectedToken {
-                    token,
+                    expr_type: token,
                     start,
                     end: self.lexer.get_index(),
                 }),
             }
         }
 
-        Ok(Expr::Command {
+        Ok(ExprType::Command(CommandExpr {
             command,
             args,
-        })
+        }))
     }
 }

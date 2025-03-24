@@ -33,4 +33,5 @@ while true
 endwhile
 
 call fib
+put "The result is: "
 put result

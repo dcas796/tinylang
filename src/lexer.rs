@@ -1,7 +1,7 @@
 use std::iter::Peekable;
 use std::str::Chars;
 use thiserror::Error;
-use crate::token::{CommandType, ComparatorType, LiteralType, Token, Type};
+use crate::token::{CommandType, ComparatorType, LiteralType, Token, TokenType, Type};
 
 #[derive(Debug, Error)]
 pub enum LexerError {
@@ -16,9 +16,8 @@ pub enum LexerError {
 type LexerResult = Result<Token, LexerError>;
 
 pub struct Lexer<'a> {
+    token_start_index: usize,
     index: usize,
-    // peek: bool,
-    // read_chars_since_peek: usize,
     peeked_tokens: Vec<Token>,
     chars: Peekable<Chars<'a>>,
     last_token: Option<Token>,
@@ -27,9 +26,8 @@ pub struct Lexer<'a> {
 impl<'a> Lexer<'a> {
     pub fn new(input: &'a str) -> Self {
         Self {
+            token_start_index: 0,
             index: 0,
-            // peek: false,
-            // read_chars_since_peek: 0,
             peeked_tokens: vec![],
             chars: input.chars().peekable(),
             last_token: None,
@@ -42,16 +40,7 @@ impl<'a> Lexer<'a> {
 
     fn next_char(&mut self) -> Option<char> {
         self.index += 1;
-        // if self.peek {
-        //     self.read_chars_since_peek += 1;
-        //     let mut peeked = None;
-        //     for _ in 0..self.read_chars_since_peek {
-        //         peeked = self.chars.peek();
-        //     }
-        //     peeked.map(|&c| c)
-        // } else {
-            self.chars.next()
-        // }
+        self.chars.next()
     }
 
     fn consume_until<F: Fn(char) -> bool>(&mut self, stop: F) -> (String, bool) {
@@ -142,27 +131,24 @@ impl<'a> Lexer<'a> {
 
     pub fn next_token(&mut self) -> LexerResult {
         if self.peeked_tokens.len() > 0 {
-            let token = self.peeked_tokens[0].clone();
-            self.peeked_tokens.remove(0);
-            Ok(token)
+            Ok(self.peeked_tokens.remove(0))
         } else {
             self._next_token()
         }
     }
 
     pub fn _next_token(&mut self) -> LexerResult {
-        let token = self.__next_token();
-        if let Ok(token) = &token {
-            self.last_token = Some(token.clone());
-        }
-        token
+        self.token_start_index = self.index;
+        let token = self.__next_token()?;
+        self.last_token = Some(token.clone());
+        Ok(token)
     }
 
     fn __next_token(&mut self) -> LexerResult {
         loop {
             let c = match self.chars.peek() {
                 Some(c) => c,
-                None => return Ok(Token::Eof),
+                None => return Ok(Token::new(self.token_start_index, self.index, TokenType::Eof)),
             };
 
             return match c {
@@ -182,7 +168,7 @@ impl<'a> Lexer<'a> {
                 },
                 _ => {
                     let identifier = self.consume_word();
-                    Ok(Token::Identifier(identifier))
+                    Ok(Token::new(self.token_start_index, self.index, TokenType::Identifier(identifier)))
                 }
             }
         }
@@ -190,7 +176,7 @@ impl<'a> Lexer<'a> {
 
     fn comment(&mut self) -> Token {
         self.consume_until(|ch| ch == '\n');
-        Token::Comment
+        Token::new(self.token_start_index, self.index, TokenType::Comment)
     }
 
     fn num_literal(&mut self) -> LexerResult {
@@ -198,7 +184,7 @@ impl<'a> Lexer<'a> {
         let num = self.consume_number();
         let end = self.index;
         if let Ok(float) = num.parse::<f64>() {
-            Ok(Token::Literal(LiteralType::Number(float)))
+            Ok(Token::new(self.token_start_index, self.index, TokenType::Literal(LiteralType::Number(float))))
         } else {
             Err(LexerError::MalformedNumberLiteral { num, start, end })
         }
@@ -212,7 +198,7 @@ impl<'a> Lexer<'a> {
             return Err(LexerError::UnexpectedEof { start });
         }
         self.next_char();
-        Ok(Token::Literal(LiteralType::String(string)))
+        Ok(Token::new(self.token_start_index, self.index, TokenType::Literal(LiteralType::String(string))))
     }
 
     fn comparator(&mut self) -> LexerResult {
@@ -220,63 +206,66 @@ impl<'a> Lexer<'a> {
         let comparator = self.consume_comparator();
         let end = self.index;
         match comparator.as_str() {
-            ">" => Ok(Token::Comparator(ComparatorType::GreaterThan)),
-            "<" => Ok(Token::Comparator(ComparatorType::LessThan)),
-            "==" => Ok(Token::Comparator(ComparatorType::Equal)),
-            ">=" => Ok(Token::Comparator(ComparatorType::GreaterOrEqualThan)),
-            "<=" => Ok(Token::Comparator(ComparatorType::LessOrEqualThan)),
+            ">" => Ok(Token::new(self.token_start_index, self.index, TokenType::Comparator(ComparatorType::GreaterThan))),
+            "<" => Ok(Token::new(self.token_start_index, self.index, TokenType::Comparator(ComparatorType::LessThan))),
+            "==" => Ok(Token::new(self.token_start_index, self.index, TokenType::Comparator(ComparatorType::Equal))),
+            ">=" => Ok(Token::new(self.token_start_index, self.index, TokenType::Comparator(ComparatorType::GreaterOrEqualThan))),
+            "<=" => Ok(Token::new(self.token_start_index, self.index, TokenType::Comparator(ComparatorType::LessOrEqualThan))),
             c => Err(LexerError::UnknownComparator { comp: String::from(c), start, end }),
         }
     }
 
     fn newline(&mut self) -> Token {
         self.next_char();
-        Token::Newline
+        Token::new(self.token_start_index, self.index, TokenType::Newline)
     }
 
     fn get_token_from_word(&self, word: &str) -> Token {
         match word {
             // Keywords
-            "def" => Token::Def,
-            "enddef" => Token::Enddef,
+            "def" => Token::new(self.token_start_index, self.index, TokenType::Def),
+            "enddef" => Token::new(self.token_start_index, self.index, TokenType::Enddef),
 
-            "if" => Token::If,
-            "else" => Token::Else,
-            "endif" => Token::Endif,
+            "if" => Token::new(self.token_start_index, self.index, TokenType::If),
+            "else" => Token::new(self.token_start_index, self.index, TokenType::Else),
+            "endif" => Token::new(self.token_start_index, self.index, TokenType::Endif),
 
-            "while" => Token::While,
-            "endwhile" => Token::Endwhile,
+            "while" => Token::new(self.token_start_index, self.index, TokenType::While),
+            "endwhile" => Token::new(self.token_start_index, self.index, TokenType::Endwhile),
 
-            "not" if self.last_token == Some(Token::If) => Token::Not,
-            "as" => Token::As,
+            "not" if matches!(
+                self.last_token, 
+                Some(Token { index_range: _, token_type: TokenType::If })
+            ) => Token::new(self.token_start_index, self.index, TokenType::Not),
+            "as" => Token::new(self.token_start_index, self.index, TokenType::As),
             // Commands
-            "move" => Token::Command(CommandType::Move),
+            "move" => Token::new(self.token_start_index, self.index, TokenType::Command(CommandType::Move)),
 
-            "not" => Token::Command(CommandType::Not),
-            "and" => Token::Command(CommandType::And),
-            "or" => Token::Command(CommandType::Or),
-            "xor" => Token::Command(CommandType::Xor),
+            "not" => Token::new(self.token_start_index, self.index, TokenType::Command(CommandType::Not)),
+            "and" => Token::new(self.token_start_index, self.index, TokenType::Command(CommandType::And)),
+            "or" => Token::new(self.token_start_index, self.index, TokenType::Command(CommandType::Or)),
+            "xor" => Token::new(self.token_start_index, self.index, TokenType::Command(CommandType::Xor)),
 
-            "add" => Token::Command(CommandType::Add),
-            "sub" => Token::Command(CommandType::Sub),
-            "mul" => Token::Command(CommandType::Mul),
-            "div" => Token::Command(CommandType::Div),
+            "add" => Token::new(self.token_start_index, self.index, TokenType::Command(CommandType::Add)),
+            "sub" => Token::new(self.token_start_index, self.index, TokenType::Command(CommandType::Sub)),
+            "mul" => Token::new(self.token_start_index, self.index, TokenType::Command(CommandType::Mul)),
+            "div" => Token::new(self.token_start_index, self.index, TokenType::Command(CommandType::Div)),
 
-            "call" => Token::Command(CommandType::Call),
-            "return" => Token::Command(CommandType::Return),
-            "break" => Token::Command(CommandType::Break),
+            "call" => Token::new(self.token_start_index, self.index, TokenType::Command(CommandType::Call)),
+            "return" => Token::new(self.token_start_index, self.index, TokenType::Command(CommandType::Return)),
+            "break" => Token::new(self.token_start_index, self.index, TokenType::Command(CommandType::Break)),
 
-            "get" => Token::Command(CommandType::Get),
-            "put" => Token::Command(CommandType::Put),
+            "get" => Token::new(self.token_start_index, self.index, TokenType::Command(CommandType::Get)),
+            "put" => Token::new(self.token_start_index, self.index, TokenType::Command(CommandType::Put)),
             // Types
-            "number" => Token::Type(Type::Number),
-            "string" => Token::Type(Type::String),
-            "bool" => Token::Type(Type::Bool),
+            "number" => Token::new(self.token_start_index, self.index, TokenType::Type(Type::Number)),
+            "string" => Token::new(self.token_start_index, self.index, TokenType::Type(Type::String)),
+            "bool" => Token::new(self.token_start_index, self.index, TokenType::Type(Type::Bool)),
             // Literals
-            "true" => Token::Literal(LiteralType::Bool(true)),
-            "false" => Token::Literal(LiteralType::Bool(false)),
+            "true" => Token::new(self.token_start_index, self.index, TokenType::Literal(LiteralType::Bool(true))),
+            "false" => Token::new(self.token_start_index, self.index, TokenType::Literal(LiteralType::Bool(false))),
             // Identifier
-            w => Token::Identifier(w.into())
+            w => Token::new(self.token_start_index, self.index, TokenType::Identifier(w.into()))
         }
     }
 }

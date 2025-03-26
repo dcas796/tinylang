@@ -387,7 +387,7 @@ impl<'a> Interpreter<'a> {
                         identifier,
                         InterpreterValue::Number(num)
                     ),
-                    Err(err) => return Err(InterpreterError::ConversionError(err)),
+                    Err(err) => return Ok(InterpreterValue::Bool(false)),
                 }
             }
 

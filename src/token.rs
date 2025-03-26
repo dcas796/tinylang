@@ -26,6 +26,7 @@ pub enum CommandType {
     Call,
     Return,
     Break,
+    Continue,
 
     Get,
     Put,

@@ -387,6 +387,7 @@ impl<'a> Parser<'a> {
             CommandType::Call => self.command_unary_expr(CommandType::Call),
             CommandType::Return => self.command_single_expr(CommandType::Return),
             CommandType::Break => self.command_single_expr(CommandType::Break),
+            CommandType::Continue => self.command_single_expr(CommandType::Continue),
             CommandType::Get => self.command_unary_expr(CommandType::Get),
             CommandType::Put => self.command_variadic_expr(CommandType::Put),
         }

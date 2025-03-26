@@ -30,10 +30,10 @@ pub enum InterpreterError {
     WrongNumOfArgs { command: CommandType, expected: usize, got: usize },
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum InterpreterStatus {
     Consumable,
-    SkipUntilEndOfExpressions { is_return: bool },
+    SkipUntilEndOfExpressions { initiator: CommandType },
     Consumed,
 }
 
@@ -290,11 +290,14 @@ impl<'a> Interpreter<'a> {
             self.execute_expressions(&while_expr.body)?;
 
             match self.status {
-                InterpreterStatus::SkipUntilEndOfExpressions { is_return: true } => break,
-                InterpreterStatus::SkipUntilEndOfExpressions { is_return: false } => {
+                InterpreterStatus::SkipUntilEndOfExpressions { initiator: CommandType::Return } => break,
+                InterpreterStatus::SkipUntilEndOfExpressions { initiator: CommandType::Break } => {
                     self.status = InterpreterStatus::Consumable;
                     break;
                 },
+                InterpreterStatus::SkipUntilEndOfExpressions { initiator: CommandType::Continue } => {
+                    // Do nothing, this is the same thing as continue
+                }
                 _ => {},
             }
         }
@@ -387,7 +390,7 @@ impl<'a> Interpreter<'a> {
                         identifier,
                         InterpreterValue::Number(num)
                     ),
-                    Err(err) => return Ok(InterpreterValue::Bool(false)),
+                    Err(_) => return Ok(InterpreterValue::Bool(false)),
                 }
             }
 
@@ -546,11 +549,21 @@ impl<'a> Interpreter<'a> {
             }
             CommandType::Return => {
                 self.command_no_args(*command, args)?;
-                self.status = InterpreterStatus::SkipUntilEndOfExpressions { is_return: true };
+                self.status = InterpreterStatus::SkipUntilEndOfExpressions { 
+                    initiator: CommandType::Return 
+                };
             }
             CommandType::Break => {
                 self.command_no_args(*command, args)?;
-                self.status = InterpreterStatus::SkipUntilEndOfExpressions { is_return: false };
+                self.status = InterpreterStatus::SkipUntilEndOfExpressions { 
+                    initiator: CommandType::Break 
+                };
+            }
+            CommandType::Continue => {
+                self.command_no_args(*command, args)?;
+                self.status = InterpreterStatus::SkipUntilEndOfExpressions { 
+                    initiator: CommandType::Continue
+                }
             }
             CommandType::Get => {
                 let dest = self.command_single_arg(*command, args)?;

@@ -254,6 +254,7 @@ impl<'a> Lexer<'a> {
             "call" => Token::new(self.token_start_index, self.index, TokenType::Command(CommandType::Call)),
             "return" => Token::new(self.token_start_index, self.index, TokenType::Command(CommandType::Return)),
             "break" => Token::new(self.token_start_index, self.index, TokenType::Command(CommandType::Break)),
+            "continue" => Token::new(self.token_start_index, self.index, TokenType::Command(CommandType::Continue)),
 
             "get" => Token::new(self.token_start_index, self.index, TokenType::Command(CommandType::Get)),
             "put" => Token::new(self.token_start_index, self.index, TokenType::Command(CommandType::Put)),

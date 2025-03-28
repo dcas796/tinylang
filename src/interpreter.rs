@@ -297,6 +297,7 @@ impl<'a> Interpreter<'a> {
                 },
                 InterpreterStatus::SkipUntilEndOfExpressions { initiator: CommandType::Continue } => {
                     // Do nothing, this is the same thing as continue
+                    self.status = InterpreterStatus::Consumable;
                 }
                 _ => {},
             }

@@ -18,14 +18,19 @@ enddef
 while true
     put "Insert a number ≥ 0: "
     get n
-    if n as number
-        if 0 <= n
-            break
-        endif
+
+    if not n as number
+        put "The input is not a number"
+        continue
     endif
-    put "Invalid number"
+
+    if 0 > n
+        put "The input is less than 0"
+        continue
+    endif
+
+    break
 endwhile
 
 call fib
-put "The nth fibonacci number is:"
-put fib_result
+put "The " n "th fibonacci number is: " fib_result

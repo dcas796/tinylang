@@ -1,5 +1,5 @@
 use std::ops::RangeInclusive;
-use crate::token::{CommandType, ComparatorType, LiteralType, TokenType, Type};
+use crate::token::{CommandType, ComparatorType, LiteralType, Type};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DefExpr {
@@ -30,6 +30,7 @@ pub struct ComparatorExpr {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ConversionExpr {
+    pub inverse: bool,
     pub ident: Box<Expr>,
     pub to_type: Type,
 }

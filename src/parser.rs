@@ -57,7 +57,7 @@ impl<'a> Parser<'a> {
                     start,
                     end: self.lexer.get_index(),
                 }),
-                TokenType::Not => self.comparator_expr(start, true),
+                TokenType::Not => self.condition_expr(true),
                 TokenType::Identifier(name) => self.identifier_expr(start, name),
                 TokenType::Literal(literal) => self.literal_expr(start, literal),
                 TokenType::Command(command) => self.command_expr(start, command),
@@ -197,7 +197,7 @@ impl<'a> Parser<'a> {
         
         let condition = {
             let start = self.get_index();
-            let cond_type = self.condition_expr()?;
+            let cond_type = self.condition_expr(false)?;
             let end = self.get_index();
             Expr::new(start, end, cond_type)
         };
@@ -232,7 +232,7 @@ impl<'a> Parser<'a> {
 
         let condition = {
             let start = self.get_index();
-            let cond_type = self.condition_expr()?;
+            let cond_type = self.condition_expr(false)?;
             let end = self.get_index();
             Expr::new(start, end, cond_type)
         };
@@ -245,12 +245,7 @@ impl<'a> Parser<'a> {
         }))
     }
 
-    fn comparator_expr(&mut self, start: usize, inverse: bool) -> ParserTypeResult {
-        if inverse {
-            // Consume not keyword
-            self.next_token(true, start)?;
-        }
-
+    fn comparator_expr(&mut self, start: usize) -> ParserTypeResult {
         let mut tok_start = start;
 
         let left = match self.next_token(true, start)? {
@@ -289,7 +284,7 @@ impl<'a> Parser<'a> {
         };
 
         Ok(ExprType::Comparator(ComparatorExpr {
-            inverse,
+            inverse: false, // this could be changed later by `condition_expr` 
             left: Box::new(left),
             right: Box::new(right),
             comparator,
@@ -330,18 +325,38 @@ impl<'a> Parser<'a> {
         };
 
         Ok(ExprType::Conversion(ConversionExpr {
+            inverse: false, // this could be changed later by `condition_expr`
             ident: Box::new(identifier),
             to_type: typ,
         }))
     }
 
-    fn condition_expr(&mut self) -> ParserTypeResult {
+    fn condition_expr(&mut self, inverse: bool) -> ParserTypeResult {
         let start = self.lexer.get_index();
-        let condition_unchecked = self.next_expression()?.expr_type;
-        match condition_unchecked {
-            ExprType::Comparator { .. } => Ok(condition_unchecked),
-            ExprType::Conversion { .. } => Ok(condition_unchecked),
-            ExprType::Literal(LiteralType::Bool(_)) => Ok(condition_unchecked),
+        
+        if inverse {
+            // Consume not keyword
+            self.next_token(true, start)?;
+        }
+        
+        let mut condition_unchecked = self.next_expression()?.expr_type;
+        match &mut condition_unchecked {
+            ExprType::Comparator(comp_expr) => {
+                if inverse {
+                    comp_expr.inverse = true;
+                }
+                Ok(condition_unchecked)
+            },
+            ExprType::Conversion(conv_expr) => {
+                if inverse {
+                    conv_expr.inverse = true;
+                }
+                Ok(condition_unchecked)
+            },
+            ExprType::Literal(LiteralType::Bool(b)) => {
+                *b ^= inverse;
+                Ok(condition_unchecked)
+            },
             _ => Err(ParserError::InvalidConditionExpr {
                 start,
                 end: self.lexer.get_index(),
@@ -351,7 +366,7 @@ impl<'a> Parser<'a> {
 
     fn identifier_expr(&mut self, start: usize, name: String) -> ParserTypeResult {
         match self.lexer.peek_distance(1)?.token_type {
-            TokenType::Comparator(_) => self.comparator_expr(start, false),
+            TokenType::Comparator(_) => self.comparator_expr(start),
             TokenType::As => self.conversion_expr(start),
             _ => {
                 self.next_token(false, start)?;
@@ -362,7 +377,7 @@ impl<'a> Parser<'a> {
 
     fn literal_expr(&mut self, start: usize, literal: LiteralType) -> ParserTypeResult {
         match self.lexer.peek_distance(1)?.token_type {
-            TokenType::Comparator(_) => self.comparator_expr(start, false),
+            TokenType::Comparator(_) => self.comparator_expr(start),
             _ => {
                 self.next_token(false, start)?;
                 Ok(ExprType::Literal(literal))

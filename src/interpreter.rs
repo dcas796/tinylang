@@ -317,16 +317,17 @@ impl<'a> Interpreter<'a> {
         let right = self.get_primitive_from_value(right_val)?;
 
         match comp_expr.comparator {
-            ComparatorType::GreaterThan => self.compare_numbers(left, right, PartialOrd::gt, start, end),
-            ComparatorType::LessThan => self.compare_numbers(left, right, PartialOrd::lt, start, end),
-            ComparatorType::Equal => self.is_equal(left, right, start, end),
-            ComparatorType::GreaterOrEqualThan => self.compare_numbers(left, right, PartialOrd::ge, start, end),
-            ComparatorType::LessOrEqualThan => self.compare_numbers(left, right, PartialOrd::le, start, end),
+            ComparatorType::GreaterThan => self.compare_numbers(comp_expr.inverse, left, right, PartialOrd::gt, start, end),
+            ComparatorType::LessThan => self.compare_numbers(comp_expr.inverse, left, right, PartialOrd::lt, start, end),
+            ComparatorType::Equal => self.is_equal(comp_expr.inverse, left, right, start, end),
+            ComparatorType::GreaterOrEqualThan => self.compare_numbers(comp_expr.inverse, left, right, PartialOrd::ge, start, end),
+            ComparatorType::LessOrEqualThan => self.compare_numbers(comp_expr.inverse, left, right, PartialOrd::le, start, end),
         }
     }
 
     fn compare_numbers(
         &self,
+        inverse: bool,
         left: InterpreterValue,
         right: InterpreterValue,
         comp: impl Fn(&f64, &f64) -> bool,
@@ -335,7 +336,7 @@ impl<'a> Interpreter<'a> {
     ) -> InterpreterResult {
         match (left, right) {
             (InterpreterValue::Number(left), InterpreterValue::Number(right)) => {
-                Ok(InterpreterValue::Bool(comp(&left, &right)))
+                Ok(InterpreterValue::Bool(comp(&left, &right) ^ inverse))
             },
             (typ, _) => Err(InterpreterError::ExpectedType {
                 expected: vec![InterpreterType::Number],
@@ -347,7 +348,8 @@ impl<'a> Interpreter<'a> {
     }
 
     fn is_equal(
-        &self, 
+        &self,
+        inverse: bool,
         left: InterpreterValue,
         right: InterpreterValue,
         start: usize,
@@ -355,10 +357,10 @@ impl<'a> Interpreter<'a> {
     ) -> InterpreterResult {
         match (left, right) {
             (InterpreterValue::Number(left), InterpreterValue::Number(right)) => {
-                Ok(InterpreterValue::Bool(left == right))
+                Ok(InterpreterValue::Bool((left == right) ^ inverse))
             },
             (InterpreterValue::String(left), InterpreterValue::String(right)) => {
-                Ok(InterpreterValue::Bool(left == right))
+                Ok(InterpreterValue::Bool((left == right) ^ inverse))
             }
             (typ, _) => Err(InterpreterError::ExpectedType {
                 expected: vec![InterpreterType::Number],
@@ -390,7 +392,7 @@ impl<'a> Interpreter<'a> {
                         identifier,
                         InterpreterValue::Number(num)
                     ),
-                    Err(_) => return Ok(InterpreterValue::Bool(false)),
+                    Err(_) => return Ok(InterpreterValue::Bool(conv_expr.inverse)),
                 }
             }
 
@@ -425,7 +427,7 @@ impl<'a> Interpreter<'a> {
             }
         }
 
-        Ok(InterpreterValue::Bool(true))
+        Ok(InterpreterValue::Bool(!conv_expr.inverse))
     }
 
     fn execute_command(&mut self, comm_expr: &CommandExpr, start: usize, end: usize) -> InterpreterResult {
